@@ -269,22 +269,12 @@
   </footer>
 </div>
 
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
 <script>
-  // ── Firebase Realtime Database에 /checklist 경로로 공유 상태 저장.
-  // 누가 체크/추가하든 모든 접속자에게 즉시 push로 반영됨(새로고침 불필요).
-  const firebaseConfig = {
-    apiKey: "AIzaSyDh8Ewx3BbzZcDzHdkfL9-MG-FTG38bpSU",
-    authDomain: "travel-plan-dad8f.firebaseapp.com",
-    databaseURL: "https://travel-plan-dad8f-default-rtdb.firebaseio.com",
-    projectId: "travel-plan-dad8f",
-    storageBucket: "travel-plan-dad8f.firebasestorage.app",
-    messagingSenderId: "757904767377",
-    appId: "1:757904767377:web:77fb006243093590734230"
-  };
-  firebase.initializeApp(firebaseConfig);
-  const checklistRef = firebase.database().ref('checklist');
+  // ── Firebase Realtime Database REST API를 순수 fetch()로 폴링.
+  // (JS SDK의 웹소켓 채널이 일부 통신사/인앱브라우저 네트워크에서 막히는 걸
+  // 확인해서, 더 범용적으로 통하는 일반 HTTPS 요청 방식으로 전환함.)
+  const DB_URL = 'https://travel-plan-dad8f-default-rtdb.firebaseio.com/checklist.json';
+  const POLL_MS = 4000;
 
   const DEFAULT_DATA = {"categories":[{"id":"c1","name":"🥩 저녁 메뉴 — 고기 + 오뎅탕 + 밀키트","items":[{"id":1,"n":"바베큐용 고기","tag":"jaeine","checked":false},{"id":2,"n":"오뎅탕 재료(오뎅·무·대파·육수팩)","tag":"suahne","checked":false},{"id":3,"n":"어른용 밀키트(찌개·안주류)","tag":"suahne","checked":false},{"id":4,"n":"쌈채소 · 쌈장 · 기름장","tag":"jaeine","checked":false},{"id":5,"n":"고기 양념(선택)","tag":"gakja","checked":false}]},{"id":"c2","name":"🍚 그 외 식사","items":[{"id":6,"n":"다음날 아침식사(즉석밥·국·반찬 등)","tag":"suahne","checked":false},{"id":7,"n":"아이 간식 · 과자","tag":"gakja","checked":false},{"id":8,"n":"생수 · 음료","tag":"gongdong","checked":false},{"id":9,"n":"얼음(당일 구매)","tag":"gongdong","checked":false},{"id":10,"n":"어른용 주류(선택)","tag":"gongdong","checked":false}]},{"id":"c3","name":"🍼 아이 용품 (7세·6세·2세)","items":[{"id":11,"n":"기저귀 · 물티슈(2세용)","tag":"jaeine","checked":false},{"id":12,"n":"유아용 식기 · 빨대컵","tag":"gakja","checked":false},{"id":13,"n":"아이 여벌옷","tag":"gakja","checked":false},{"id":14,"n":"아이 놀거리(모래놀이 등)","tag":"gakja","checked":false},{"id":15,"n":"구급약 상비함(공용)","tag":"suahne","checked":false},{"id":16,"n":"모기 · 벌레 기피제","tag":"gakja","checked":false}]},{"id":"c4","name":"🎒 개인 준비물","items":[{"id":17,"n":"저녁용 겉옷 · 핫팩(일교차 대비)","tag":"gakja","checked":false},{"id":18,"n":"우비(날씨 변동 대비)","tag":"gakja","checked":false},{"id":19,"n":"선크림","tag":"gakja","checked":false},{"id":20,"n":"보조배터리 · 충전기","tag":"gakja","checked":false},{"id":21,"n":"쓰레기봉투(여분)","tag":"suahne","checked":false}]},{"id":"c5","name":"➕ 생각나서 추가한 것","items":[]}],"nextId":22};
 
@@ -292,22 +282,45 @@
   let curFilter = 'all';
   let DATA = null;
   let connected = false;
+  let pulling = false;
 
-  checklistRef.on('value', snap => {
-    const val = snap.val();
-    if (val) {
-      DATA = val;
-    } else if (!DATA) {
-      DATA = DEFAULT_DATA;
-      checklistRef.set(DATA); // 첫 방문자가 초기 리스트로 시딩
+  async function pull() {
+    if (pulling) return; // 이전 폴링이 아직 안 끝났으면 건너뜀
+    pulling = true;
+    try {
+      const res = await fetch(DB_URL, { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const val = await res.json();
+      if (val) {
+        DATA = val;
+      } else if (!DATA) {
+        DATA = DEFAULT_DATA;
+        await push(); // 첫 방문자가 초기 리스트로 시딩
+      }
+      connected = true;
+    } catch (e) {
+      connected = false;
     }
-    connected = true;
+    pulling = false;
     render();
-  }, err => {
-    connected = false;
-    document.getElementById('sync-banner').innerHTML =
-      `<div class="sync-banner readonly">⚠️ 연결에 실패했어요 — 새로고침해보세요 (${esc(err.message||'')})</div>`;
-  });
+  }
+
+  async function push() {
+    try {
+      await fetch(DB_URL, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(DATA)
+      });
+      connected = true;
+    } catch (e) {
+      connected = false;
+      alert('저장에 실패했어요: ' + (e && e.message ? e.message : '알 수 없는 오류') + ' — 다시 시도해주세요.');
+    }
+  }
+
+  pull();
+  setInterval(pull, POLL_MS);
 
   function render() {
     const root = document.getElementById('checklist');
@@ -354,17 +367,11 @@
     if (!connected) {
       el.innerHTML = `<div class="sync-banner offline">연결 중...</div>`;
     } else {
-      el.innerHTML = `<div class="sync-banner live"><span class="pulse-dot"></span>두 가족에게 실시간으로 공유되고 있어요</div>`;
+      el.innerHTML = `<div class="sync-banner live"><span class="pulse-dot"></span>두 가족에게 자동으로 동기화되고 있어요 (몇 초 내 반영)</div>`;
     }
   }
 
   function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-
-  function save() {
-    checklistRef.set(DATA).catch(e => {
-      alert('저장에 실패했어요: ' + (e && e.message ? e.message : '알 수 없는 오류') + ' — 다시 시도해주세요.');
-    });
-  }
 
   function toggle(id) {
     for (const cat of DATA.categories) {
@@ -372,7 +379,7 @@
       if (it) { it.checked = !it.checked; break; }
     }
     render();
-    save();
+    push();
   }
 
   function removeItem(id) {
@@ -381,7 +388,7 @@
       if (idx !== -1) { cat.items.splice(idx, 1); break; }
     }
     render();
-    save();
+    push();
   }
 
   function addItem() {
@@ -392,7 +399,7 @@
     const c5 = DATA.categories.find(c => c.id === 'c5');
     c5.items.push({ id: DATA.nextId++, n: name, tag: sel.value, checked: false });
     render();
-    save();
+    push();
   }
 
   function setFilter(f) {
@@ -406,7 +413,7 @@
     document.querySelectorAll('.timeline').forEach(t => t.classList.toggle('active', +t.dataset.day === d));
   }
 
-  render(); // DATA 로드 전엔 "불러오는 중" 표시 — checklistRef.on('value')가 뜨면 재렌더링됨
+  render(); // DATA 로드 전엔 "불러오는 중" 표시 — pull()이 끝나면 재렌더링됨
 </script>
 </body>
 </html>
