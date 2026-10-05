@@ -284,6 +284,13 @@
   let connected = false;
   let pulling = false;
 
+  // Firebase RTDB는 빈 배열/객체를 저장하면 그 필드 자체를 지워버려서
+  // (읽으면 null) 돌아온다 — categories/items가 항상 배열이도록 보정.
+  function normalize(data) {
+    data.categories = (data.categories || []).map(cat => ({ ...cat, items: cat.items || [] }));
+    return data;
+  }
+
   async function pull() {
     if (pulling) return; // 이전 폴링이 아직 안 끝났으면 건너뜀
     pulling = true;
@@ -292,9 +299,9 @@
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const val = await res.json();
       if (val) {
-        DATA = val;
+        DATA = normalize(val);
       } else if (!DATA) {
-        DATA = DEFAULT_DATA;
+        DATA = normalize(DEFAULT_DATA);
         await push(); // 첫 방문자가 초기 리스트로 시딩
       }
       connected = true;
