@@ -283,6 +283,7 @@
   let DATA = null;
   let connected = false;
   let pulling = false;
+  let lastDataJson = null; // 직전에 화면에 그린 데이터 — 바뀐 게 없으면 다시 안 그림(입력 중인 폼 보존)
 
   // Firebase RTDB는 빈 배열/객체를 저장하면 그 필드 자체를 지워버려서
   // (읽으면 null) 돌아온다 — categories/items가 항상 배열이도록 보정.
@@ -294,22 +295,34 @@
   async function pull() {
     if (pulling) return; // 이전 폴링이 아직 안 끝났으면 건너뜀
     pulling = true;
+    const wasConnected = connected;
     try {
       const res = await fetch(DB_URL, { cache: 'no-store' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const val = await res.json();
+      let next;
       if (val) {
-        DATA = normalize(val);
+        next = normalize(val);
       } else if (!DATA) {
-        DATA = normalize(DEFAULT_DATA);
-        await push(); // 첫 방문자가 초기 리스트로 시딩
+        next = normalize(DEFAULT_DATA);
       }
       connected = true;
+      if (next) {
+        const nextJson = JSON.stringify(next);
+        if (nextJson !== lastDataJson) {
+          DATA = next;
+          lastDataJson = nextJson;
+          render(); // 서버 쪽 내용이 실제로 바뀐 경우에만 전체 다시 그림
+          if (!val) await push(); // 첫 방문자가 초기 리스트로 시딩
+        } else if (!wasConnected) {
+          renderSyncBanner(); // 내용은 그대로, 연결 상태만 복구된 경우
+        }
+      }
     } catch (e) {
       connected = false;
+      if (wasConnected) renderSyncBanner();
     }
     pulling = false;
-    render();
   }
 
   async function push() {
@@ -386,6 +399,7 @@
       if (it) { it.checked = !it.checked; break; }
     }
     render();
+    lastDataJson = JSON.stringify(DATA); // 폴링이 같은 내용을 "변경"으로 오인해 다시 그리는 것 방지
     push();
   }
 
@@ -395,6 +409,7 @@
       if (idx !== -1) { cat.items.splice(idx, 1); break; }
     }
     render();
+    lastDataJson = JSON.stringify(DATA);
     push();
   }
 
@@ -406,6 +421,7 @@
     const c5 = DATA.categories.find(c => c.id === 'c5');
     c5.items.push({ id: DATA.nextId++, n: name, tag: sel.value, checked: false });
     render();
+    lastDataJson = JSON.stringify(DATA);
     push();
   }
 
